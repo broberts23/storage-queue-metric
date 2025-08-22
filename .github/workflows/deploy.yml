@@ -50,10 +50,9 @@ jobs:
 
           # Compute function app name if not provided (allowed: letters, numbers, '-', 2-60 chars)
           if [ -z "${{ github.event.inputs.functionAppName }}" ]; then
-            owner=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f1)
             repo=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
             short_hash=$(echo "$GITHUB_SHA" | cut -c1-8 | tr '[:upper:]' '[:lower:]')
-            func_default="${owner}-${repo}-${short_hash}"
+            func_default="${repo}-${short_hash}"
             # sanitize: lowercase, replace invalid chars with '-', collapse duplicates, trim to 60, remove leading/trailing '-'
             func_default=$(echo "$func_default" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/-\{2,\}/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-60)
             # ensure minimum length 2
