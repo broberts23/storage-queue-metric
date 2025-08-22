@@ -18,51 +18,80 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: 'Azure Login (OIDC)'
-      uses: azure/login@v2
-      with:
-        client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        enable-AzPSSession: true
+      - name: 'Azure Login (OIDC)'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
 
-    - name: 'Deploy Bicep'
-      run: |
-        az deployment group create \
-          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-          --template-file infra/main.bicep \
-          --parameters storageAccountName=${{ github.event.inputs.storageAccountName }} functionAppName=${{ github.event.inputs.functionAppName }}
+      - name: 'Prepare names and Deploy Bicep'
+        id: prepare
+        run: |
+          # Compute storage account name if not provided (must be 3-24 lowercase letters/numbers)
+          if [ -z "${{ github.event.inputs.storageAccountName }}" ]; then
+            repo_safe=$(echo "${GITHUB_REPOSITORY//[^a-zA-Z0-9]/}" | tr '[:upper:]' '[:lower:]')
+            # use run id to help uniqueness, trim to keep within 24 chars
+            storage_default="${repo_safe}${GITHUB_RUN_ID}"
+            storage_default=$(echo "$storage_default" | tr -cd '[:alnum:]' | cut -c1-24 | tr '[:upper:]' '[:lower:]')
+          else
+            storage_default="${{ github.event.inputs.storageAccountName }}"
+          fi
 
-    - name: 'Get outputs'
-      id: outputs
-      run: |
-        echo "##[group]Get Outputs"
-        az deployment group show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name "$(az deployment group list --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query '[0].name' -o tsv)" --query properties.outputs -o json > outputs.json
-        cat outputs.json
-        echo "##[endgroup]"
-        echo "outputs=$(jq -c . outputs.json)" >> $GITHUB_OUTPUT
+          # Compute function app name if not provided (app name allows letters, numbers, '-' and up to 60 chars)
+          if [ -z "${{ github.event.inputs.functionAppName }}" ]; then
+            owner=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f1)
+            repo=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+            func_default="${owner}-${repo}-${GITHUB_RUN_ID}"
+            func_default=$(echo "$func_default" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+            func_default=$(echo "$func_default" | cut -c1-60)
+          else
+            func_default="${{ github.event.inputs.functionAppName }}"
+          fi
 
-    - name: 'Deploy Function App (zip)'
-      run: |
-        # Create a zip of the function folder
-        cd QueueMessageCountToLA
-        zip -r ../functionapp.zip *
-        cd ..
-        az functionapp deployment source config-zip --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name $(jq -r '.functionAppName.value' outputs.json) --src functionapp.zip
+          echo "Using storageAccountName: $storage_default"
+          echo "Using functionAppName: $func_default"
 
-    - name: 'Populate queues (post-deploy)'
-      env:
-        AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-      run: |
-        echo "Running post-deploy populate script"
-        # Ensure pwsh is available
-        pwsh -c 'Write-Host "Using PowerShell $(pwsh --version)"'
+          # Export for other steps
+          echo "storageAccountName=$storage_default" >> $GITHUB_OUTPUT
+          echo "functionAppName=$func_default" >> $GITHUB_OUTPUT
 
-        # Get deployment name
-        deploymentName=$(az deployment group list --resource-group $AZURE_RESOURCE_GROUP --query '[0].name' -o tsv)
-        echo "Deployment: $deploymentName"
+          az deployment group create \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --template-file infra/main.bicep \
+            --parameters storageAccountName=$storage_default functionAppName=$func_default
 
-        # Run the populate script with parameters
-        pwsh ./scripts/populate-queues.ps1 -ResourceGroup $AZURE_RESOURCE_GROUP -DeploymentName $deploymentName -MinMessages 1 -MaxMessages 50
+      - name: 'Get outputs'
+        id: outputs
+        run: |
+          echo "##[group]Get Outputs"
+          az deployment group show --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name "$(az deployment group list --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query '[0].name' -o tsv)" --query properties.outputs -o json > outputs.json
+          cat outputs.json
+          echo "##[endgroup]"
+          echo "outputs=$(jq -c . outputs.json)" >> $GITHUB_OUTPUT
+
+      - name: 'Deploy Function App (zip)'
+        run: |
+          # Create a zip of the function folder
+          cd QueueMessageCountToLA
+          zip -r ../functionapp.zip *
+          cd ..
+          az functionapp deployment source config-zip --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ steps.prepare.outputs.functionAppName }} --src functionapp.zip
+
+      - name: 'Populate queues (post-deploy)'
+        env:
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          echo "Running post-deploy populate script"
+          # Ensure pwsh is available
+          pwsh -c 'Write-Host "Using PowerShell $(pwsh --version)"'
+
+          # Get deployment name
+          deploymentName=$(az deployment group list --resource-group $AZURE_RESOURCE_GROUP --query '[0].name' -o tsv)
+          echo "Deployment: $deploymentName"
+
+          # Run the populate script with parameters
+          pwsh ./scripts/populate-queues.ps1 -ResourceGroup $AZURE_RESOURCE_GROUP -DeploymentName $deploymentName -MinMessages 1 -MaxMessages 50
