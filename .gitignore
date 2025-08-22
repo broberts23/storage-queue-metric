@@ -1,0 +1,10 @@
+# Repository-level ignores
+
+# Ignore Azure Functions local settings (do not commit secrets)
+local.settings.json
+**/local.settings.json
+
+# Optional: common artifacts
+bin/
+obj/
+.vs/
