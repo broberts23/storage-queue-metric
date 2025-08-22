@@ -1,5 +1,9 @@
 name: Deploy Function App
 
+permissions:
+  id-token: write
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
