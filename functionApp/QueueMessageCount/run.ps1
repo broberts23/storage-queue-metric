@@ -52,13 +52,6 @@ foreach ($q in $queues) {
     try {
         $qref = Get-AzStorageQueue -Name $queueName -Context $ctx -ErrorAction Stop
         if ($null -ne $qref) {
-            # # Track 1 (WindowsAzure.Storage) path
-            # if ($qref.PSObject.Properties["CloudQueue"] -and $null -ne $qref.CloudQueue) {
-            #     $qref.CloudQueue.FetchAttributes()
-            #     $approx = $qref.CloudQueue.ApproximateMessageCount
-            #     if ($null -ne $approx) { $value = [int]$approx }
-            # }
-            # Track 2 (Azure.Storage.Queues) path
             if ($qref.PSObject.Properties["QueueClient"] -and $null -ne $qref.QueueClient) {
                 $props = $qref.QueueClient.GetProperties()
                 if ($props -and $props.Value -and $props.Value.PSObject.Properties["ApproximateMessagesCount"]) {
@@ -67,15 +60,16 @@ foreach ($q in $queues) {
                 }
             }
         }
-    } catch {
+    }
+    catch {
         Write-Warning "Fetch attributes failed for queue ${queueName}: $_"
     }
 
     $record = [PSCustomObject]@{
-        TimeGenerated = (Get-Date).ToString("o")
+        TimeGenerated  = (Get-Date).ToString("o")
         StorageAccount = $StorageAccountName
-        QueueName = $queueName
-        MessageCount = $value
+        QueueName      = $queueName
+        MessageCount   = $value
     }
     $records += $record
 }
@@ -88,9 +82,9 @@ if ($records.Count -eq 0) {
 # Send telemetry (custom metric) to Application Insights using v2 ingestion endpoint
 function Send-ToAppInsights {
     param(
-        [Parameter(Mandatory=$true)] [string]$IngestionEndpoint,
-        [Parameter(Mandatory=$false)] [string]$InstrumentationKey,
-        [Parameter(Mandatory=$true)] [object[]]$Records
+        [Parameter(Mandatory = $true)] [string]$IngestionEndpoint,
+        [Parameter(Mandatory = $false)] [string]$InstrumentationKey,
+        [Parameter(Mandatory = $true)] [object[]]$Records
     )
 
     $endpoint = $IngestionEndpoint.TrimEnd('/') + '/v2/track'
@@ -105,11 +99,11 @@ function Send-ToAppInsights {
             data = @{ 
                 baseType = 'MetricData'
                 baseData = @{ 
-                    ver = 2
-                    metrics = @( @{ name = 'QueueMessageCount'; value = $metricValue } )
+                    ver        = 2
+                    metrics    = @( @{ name = 'QueueMessageCount'; value = $metricValue } )
                     properties = @{ 
                         StorageAccount = $r.StorageAccount
-                        QueueName = $r.QueueName
+                        QueueName      = $r.QueueName
                     }
                 }
             }
@@ -122,7 +116,8 @@ function Send-ToAppInsights {
     try {
         Invoke-RestMethod -Method Post -Uri $endpoint -ContentType 'application/json' -Body $bodyJson -ErrorAction Stop
         Write-Host "Sent $($Records.Count) metric telemetry items to Application Insights at $endpoint"
-    } catch {
+    }
+    catch {
         Write-Error "Failed to send to Application Insights: $_"
     }
 }
