@@ -35,11 +35,11 @@ Connect-AzAccount -Identity
 Disable-AzContextAutosave -Scope Process | Out-Null
 Set-AzContext -Subscription $SubscriptionId
 
-# Get storage account context
+# Get storage account and build an OAuth data-plane context for queues
 $storage = Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -Name $StorageAccountName -ErrorAction Stop
+$ctx = New-AzStorageContext -StorageAccountName $StorageAccountName -UseConnectedAccount -ErrorAction Stop
 
-# List queues using Az.Storage
-$ctx = $storage.Context
+# List queues using Az.Storage with AAD context
 $queues = Get-AzStorageQueue -Context $ctx -ErrorAction Stop
 
 $records = @()
@@ -51,10 +51,21 @@ foreach ($q in $queues) {
     $value = 0
     try {
         $qref = Get-AzStorageQueue -Name $queueName -Context $ctx -ErrorAction Stop
-        if ($qref -and $qref.CloudQueue) {
-            $qref.CloudQueue.FetchAttributes()
-            $approx = $qref.CloudQueue.ApproximateMessageCount
-            if ($null -ne $approx) { $value = [int]$approx }
+        if ($null -ne $qref) {
+            # Track 1 (WindowsAzure.Storage) path
+            if ($qref.PSObject.Properties["CloudQueue"] -and $null -ne $qref.CloudQueue) {
+                $qref.CloudQueue.FetchAttributes()
+                $approx = $qref.CloudQueue.ApproximateMessageCount
+                if ($null -ne $approx) { $value = [int]$approx }
+            }
+            # Track 2 (Azure.Storage.Queues) path
+            elseif ($qref.PSObject.Properties["QueueClient"] -and $null -ne $qref.QueueClient) {
+                $props = $qref.QueueClient.GetProperties()
+                if ($props -and $props.Value -and $props.Value.PSObject.Properties["ApproximateMessagesCount"]) {
+                    $approx = $props.Value.ApproximateMessagesCount
+                    if ($null -ne $approx) { $value = [int]$approx }
+                }
+            }
         }
     } catch {
         Write-Warning "Fetch attributes failed for queue ${queueName}: $_"
