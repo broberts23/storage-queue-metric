@@ -32,6 +32,7 @@ if (-not $SubscriptionId -or -not $ResourceGroupName -or -not $StorageAccountNam
     return
 }
 
+Connect-AzAccount -Identity
 Set-AzContext -Subscription $SubscriptionId
 
 # Get storage account resource id
