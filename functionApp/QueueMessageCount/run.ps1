@@ -52,14 +52,14 @@ foreach ($q in $queues) {
     try {
         $qref = Get-AzStorageQueue -Name $queueName -Context $ctx -ErrorAction Stop
         if ($null -ne $qref) {
-            # Track 1 (WindowsAzure.Storage) path
-            if ($qref.PSObject.Properties["CloudQueue"] -and $null -ne $qref.CloudQueue) {
-                $qref.CloudQueue.FetchAttributes()
-                $approx = $qref.CloudQueue.ApproximateMessageCount
-                if ($null -ne $approx) { $value = [int]$approx }
-            }
+            # # Track 1 (WindowsAzure.Storage) path
+            # if ($qref.PSObject.Properties["CloudQueue"] -and $null -ne $qref.CloudQueue) {
+            #     $qref.CloudQueue.FetchAttributes()
+            #     $approx = $qref.CloudQueue.ApproximateMessageCount
+            #     if ($null -ne $approx) { $value = [int]$approx }
+            # }
             # Track 2 (Azure.Storage.Queues) path
-            elseif ($qref.PSObject.Properties["QueueClient"] -and $null -ne $qref.QueueClient) {
+            if ($qref.PSObject.Properties["QueueClient"] -and $null -ne $qref.QueueClient) {
                 $props = $qref.QueueClient.GetProperties()
                 if ($props -and $props.Value -and $props.Value.PSObject.Properties["ApproximateMessagesCount"]) {
                     $approx = $props.Value.ApproximateMessagesCount
