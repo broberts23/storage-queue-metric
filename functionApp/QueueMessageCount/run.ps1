@@ -3,7 +3,6 @@ param($Timer)
 Write-Host "QueueMessageCountToLA triggered at: $(Get-Date)"
 
 Import-Module Az.Accounts -Force -ErrorAction Stop
-Import-Module Az.Monitor -Force -ErrorAction Stop
 Import-Module Az.Storage -Force -ErrorAction Stop
 
 # Configuration from environment variables (set these in local.settings.json or function app settings)
@@ -36,58 +35,29 @@ Connect-AzAccount -Identity
 Disable-AzContextAutosave -Scope Process | Out-Null
 Set-AzContext -Subscription $SubscriptionId
 
-# Get storage account resource id
+# Get storage account context
 $storage = Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -Name $StorageAccountName -ErrorAction Stop
-$storageResourceId = $storage.Id
 
 # List queues using Az.Storage
 $ctx = $storage.Context
 $queues = Get-AzStorageQueue -Context $ctx -ErrorAction Stop
-
-$now = Get-Date
-$startTime = $now.AddMinutes(-5)
 
 $records = @()
 
 foreach ($q in $queues) {
     $queueName = $q.Name
 
-    # Query metric: QueueMessageCount - take the latest value in the window
+    # Fetch approximate message count directly from the queue (per-queue counts are not available via Azure Monitor metrics)
     $value = 0
     try {
-        $metric = Get-AzMetric -ResourceId $storageResourceId -MetricName "QueueMessageCount" -TimeGrain 00:01:00 -StartTime $startTime -EndTime $now -Aggregation "Total" -ErrorAction Stop
-
-        if ($metric -and $metric.TimeSeries) {
-            # Find the timeseries that corresponds to this queue via its dimension values
-            $ts = $metric.TimeSeries | Where-Object {
-                $_.Metadatavalues -and ($_.Metadatavalues | Where-Object { $_.Name -in @('QueueName','EntityName') -and $_.Value -eq $queueName })
-            } | Select-Object -First 1
-
-            if ($ts -and $ts.Data) {
-                # Pick last data point with a numeric total/average value
-                $last = $ts.Data | Where-Object { $_.Total -ne $null -or $_.Average -ne $null } | Select-Object -Last 1
-                if ($last) {
-                    if ($null -ne $last.Total) { $value = [int]$last.Total }
-                    elseif ($null -ne $last.Average) { $value = [int][math]::Round($last.Average) }
-                }
-            }
+        $qref = Get-AzStorageQueue -Name $queueName -Context $ctx -ErrorAction Stop
+        if ($qref -and $qref.CloudQueue) {
+            $qref.CloudQueue.FetchAttributes()
+            $approx = $qref.CloudQueue.ApproximateMessageCount
+            if ($null -ne $approx) { $value = [int]$approx }
         }
     } catch {
-        Write-Warning "Failed to get metric for queue $queueName : $_"
-    }
-
-    # Fallback: fetch approximate message count from storage if metric not found or zero
-    if ($value -eq 0) {
-        try {
-            $qref = Get-AzStorageQueue -Name $queueName -Context $ctx -ErrorAction Stop
-            if ($qref -and $qref.CloudQueue) {
-                $qref.CloudQueue.FetchAttributes()
-                $approx = $qref.CloudQueue.ApproximateMessageCount
-                if ($null -ne $approx) { $value = [int]$approx }
-            }
-        } catch {
-            Write-Warning "Fallback fetch attributes failed for queue ${queueName}: $_"
-        }
+        Write-Warning "Fetch attributes failed for queue ${queueName}: $_"
     }
 
     $record = [PSCustomObject]@{
