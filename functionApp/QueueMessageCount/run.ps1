@@ -33,6 +33,7 @@ if (-not $SubscriptionId -or -not $ResourceGroupName -or -not $StorageAccountNam
 }
 
 Connect-AzAccount -Identity
+Disable-AzContextAutosave -Scope Process | Out-Null
 Set-AzContext -Subscription $SubscriptionId
 
 # Get storage account resource id
