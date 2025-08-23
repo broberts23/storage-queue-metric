@@ -21,6 +21,11 @@ resource st 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   }
 }
 
+// Build connection strings and content share name after storage account exists
+var storageAccountKey = st.listKeys().keys[0].value
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${st.name};AccountKey=${storageAccountKey};EndpointSuffix=${environment().suffixes.storage}'
+var contentShareName = toLower('${functionAppName}-content')
+
 resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2021-09-01' = {
   name: 'default'
   parent: st
@@ -33,6 +38,18 @@ resource queues 'Microsoft.Storage/storageAccounts/queueServices/queues@2021-09-
     properties: {}
   }
 ]
+
+// Ensure a file share exists for Function App content (required when using Azure Files content share settings)
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2021-09-01' = {
+  name: 'default'
+  parent: st
+}
+
+resource contentShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2021-09-01' = {
+  name: contentShareName
+  parent: fileService
+  properties: {}
+}
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: toLower('${functionAppName}-ai')
@@ -66,16 +83,24 @@ resource functionApp 'Microsoft.Web/sites@2021-02-01' = {
     siteConfig: {
       appSettings: [
         {
+          name: 'AzureWebJobsStorage'
+          value: storageConnectionString
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
+          value: storageConnectionString
+        }
+        {
+          name: 'WEBSITE_CONTENTSHARE'
+          value: contentShareName
+        }
+        {
           name: 'FUNCTIONS_EXTENSION_VERSION'
           value: '~4'
         }
         {
           name: 'FUNCTIONS_WORKER_RUNTIME'
           value: 'powershell'
-        }
-        {
-          name: 'PowerShellVersion'
-          value: '7.4'
         }
         {
           name: 'WEBSITE_RUN_FROM_PACKAGE'
@@ -100,7 +125,7 @@ resource functionApp 'Microsoft.Web/sites@2021-02-01' = {
       ]
     }
   }
-  dependsOn: [queues]
+  dependsOn: [queues, contentShare]
 }
 
 output queueNames array = queueNames
